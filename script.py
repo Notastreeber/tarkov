@@ -35,39 +35,47 @@ def fetch_codes_from_xterotex():
 
         html_text = response.text
 
-        # 1. Isolieren des Bereichs nach "SEASON CODES FÜR LAUNCHER" oder "CODES FÜR LAUNCHER"
-        section_match = re.search(r"(SEASON\s+CODES\s+FÜR\s+LAUNCHER|CODES\s+FÜR\s+LAUNCHER)(.*?)(?=<h[1-6]|<footer|$)", html_text, re.IGNORECASE | re.DOTALL)
-        
-        target_text = ""
-        if section_match:
-            target_text = section_match.group(2)
-            print("[+] Bereich 'SEASON CODES FÜR LAUNCHER' erfolgreich auf xterotex.de lokalisiert.")
-        else:
-            print("[-] Hinweis: Spezifische Überschrift nicht exakt gefunden. Durchsuche den gesamten Seiteninhalt...")
-            target_text = html_text
+        # 1. Schneide den Text EXAKTLICH ab "SEASON CODES FÜR LAUNCHER" aus
+        pattern_start = r"SEASON\s+CODES\s+FÜR\s+LAUNCHER.*?(?=probieren|probiert|\n|<br)"
+        match_start = re.search(pattern_start, html_text, re.IGNORECASE | re.DOTALL)
 
-        # 2. Regulärer Ausdruck für Tarkov Promo-Codes (Typische Formate wie H77WTXS6FFH1, 1U0MUER etc.)
-        # Extrahiert alfanumerische Zeichenketten zwischen 6 und 20 Zeichen
-        raw_candidates = re.findall(r'\b[A-Z0-9]{6,20}\b', target_text.upper())
+        if not match_start:
+            print("[-] 'SEASON CODES FÜR LAUNCHER' nicht gefunden.")
+            return []
 
-        # Blacklist für Wörter/HTML-Attribute, die in Webseiten-Quelltexten vorkommen
-        black_list = {
-            "LAUNCHER", "SEASON", "CODES", "CODE", "NEWS", "GERMAN", "DEUTSCH",
-            "TARKOV", "ESCAPE", "BATTLESTATE", "HTTP", "HTTPS", "CLASS", "STYLE",
-            "DIV", "SPAN", "HREF", "SRC", "WIDTH", "HEIGHT", "COLOR", "PADDING",
-            "MARGIN", "DISPLAY", "CONTAINER", "CONTENT", "FOOTER", "HEADER", "NAV"
+        # Nimmt alles ab der Fundstelle
+        sub_text = html_text[match_start.start():]
+
+        # Beende das Lesen, sobald die nächste H1-H6 Überschrift oder ein Footer kommt
+        match_end = re.search(r"<h[1-6]|<footer", sub_text, re.IGNORECASE)
+        if match_end:
+            sub_text = sub_text[:match_end.start()]
+
+        print("[+] Bereich 'SEASON CODES FÜR LAUNCHER' wurde präzise isoliert.")
+
+        # 2. Regulärer Ausdruck:
+        # Matcht entweder Standard-Codes (z.B. WIPE, PCGAMESN) ODER Formate mit Bindestrichen (z.B. 6NU9-UFK1-W2TX-89RW-M96B)
+        found_raw = re.findall(r'\b[A-Z0-9]{4,}(?:-[A-Z0-9]{4,})*\b', sub_text.upper())
+
+        # Wörtersperre für Sätze/Anweisungen im Text
+        ignore_list = {
+            "SEASON", "CODES", "LAUNCHER", "MANCHE", "FUNKTIONIEREN", 
+            "ANDERE", "NICHT", "SCHEINT", "VERBUGGT", "SEIN", "PROBIERT", 
+            "EINFACH", "ALLE", "NEWS", "GERMAN", "DEUTSCH", "TARKOV"
         }
 
-        found_codes = []
-        for candidate in raw_candidates:
-            # Nur Strings zulassen, die keine rein Zahlen oder reine Blacklist-Wörter sind
-            if candidate not in black_list and not candidate.isdigit():
-                # Mindestens ein Buchstabe und eine Zahl ODER eine typische Code-Länge
-                if any(c.isdigit() for c in candidate) or len(candidate) >= 8:
-                    found_codes.append(candidate)
+        valid_codes = []
+        for token in found_raw:
+            token = token.strip()
+            # Ignoriere Sätze/Überschriften und reine Zahlen
+            if token not in ignore_list and not token.isdigit():
+                # Verhindert kaputte Schnipsel wie -M96B
+                if not token.startswith("-") and not token.endswith("-"):
+                    valid_codes.append(token)
 
-        unique_codes = list(dict.fromkeys(found_codes))  # Behält die Reihenfolge bei und entfernt Duplikate
-        print(f"[*] {len(unique_codes)} valide Codes von xterotex.de ausgelesen: {unique_codes}")
+        # Duplikate entfernen, Reihenfolge behalten
+        unique_codes = list(dict.fromkeys(valid_codes))
+        print(f"[*] {len(unique_codes)} exakte Codes extrahiert: {unique_codes}")
         return unique_codes
 
     except Exception as e:
@@ -151,7 +159,7 @@ def main():
 
     codes = fetch_codes_from_xterotex()
     if not codes:
-        print("[*] Keine gültigen Codes auf xterotex.de gefunden.")
+        print("[*] Keine gültigen Codes im Zielbereich auf xterotex.de gefunden.")
         return
 
     try:
@@ -172,8 +180,8 @@ def main():
 
     for code in codes:
         if code not in current_markdown:
-            print(f"[!] Neuer Code von xterotex.de wird angefügt: {code}")
-            new_row = f"\n| `{code}` | 🟡 **UNGEPRÜFT** | *Gefunden auf xterotex.de* |"
+            print(f"[!] Neuer Code angefügt: {code}")
+            new_row = f"\n| `{code}` | 🟡 **UNGEPRÜFT** | *Neu entdeckt auf xterotex.de* |"
             
             updated_markdown = re.sub(
                 separator_pattern,
@@ -190,7 +198,7 @@ def main():
         update_and_render_wiki_page(page_data, updated_markdown)
         print(f"[+] {added_count} neue(r) Code(s) erfolgreich im Wiki eingetragen!")
     else:
-        print("[*] Alle ausgelesenen Codes von xterotex.de sind bereits im Wiki eingetragen.")
+        print("[*] Alle ausgelesenen Codes aus diesem Abschnitt sind bereits im Wiki vorhanden.")
 
 if __name__ == "__main__":
     main()
