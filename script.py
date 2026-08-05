@@ -4,11 +4,9 @@ import datetime
 import requests
 import feedparser
 
-# Konfiguration aus den GitHub Secrets laden
 WIKI_URL = os.environ.get("WIKI_URL", "").strip()
 WIKI_API_TOKEN = os.environ.get("WIKI_API_TOKEN", "").strip()
 
-# Formatiere die URL korrekt für GraphQL
 if WIKI_URL:
     if not WIKI_URL.startswith("http://") and not WIKI_URL.startswith("https://"):
         WIKI_URL = "https://" + WIKI_URL
@@ -23,14 +21,11 @@ except ValueError:
     WIKI_PAGE_ID = 0
 
 def get_latest_reddit_codes():
-    print("[*] Durchsuche Reddit (via RSS) nach neuen Codes (max. 1 Jahr alt)...")
-    
-    # RSS-Search beschränken (t=year beschränkt die Ergebnisse auf die letzten 365 Tage)
+    print("[*] Durchsuche Reddit (via RSS) nach neuen Codes...")
     rss_url = "https://www.reddit.com/r/EscapefromTarkov/search.rss?q=promo+code&sort=new&restrict_sr=on&t=year"
     
     try:
         feed = feedparser.parse(rss_url, agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) EFT-Bot/2.0")
-        
         if feed.bozo and not feed.entries:
             print(f"[-] RSS Feed konnte nicht gelesen werden: {feed.get('bozo_exception', 'Unbekannter Fehler')}")
             return []
@@ -38,36 +33,27 @@ def get_latest_reddit_codes():
         found_codes = []
         now = datetime.datetime.now(datetime.timezone.utc)
         one_year_ago = now - datetime.timedelta(days=365)
-
-        # Wortliste zum Filtern allgemeiner Begriffe/Tags
-        ignore_list = [
-            "TARKOV", "BSG", "BATTLESTATE", "GAME", "PATCH", "UPDATE", "NEWS", 
-            "DISCORD", "TWITCH", "REDDIT", "PROMO", "CODES", "CODE", "ESCAPE", 
-            "ARENA", "EDITION", "STEAM", "WIPE", "PVE", "PVP", "LIST"
-        ]
+        ignore_list = ["TARKOV", "BSG", "BATTLESTATE", "GAME", "PATCH", "UPDATE", "NEWS", "DISCORD", "TWITCH", "REDDIT", "PROMO", "CODES", "CODE", "ESCAPE", "ARENA", "EDITION", "STEAM", "WIPE", "PVE", "PVP", "LIST"]
 
         for entry in feed.entries:
-            # Erstellungsdatum des Posts prüfen
             published_parsed = entry.get("published_parsed")
             if published_parsed:
                 pub_date = datetime.datetime(*published_parsed[:6], tzinfo=datetime.timezone.utc)
                 if pub_date < one_year_ago:
-                    continue  # Überspringen, wenn älter als 1 Jahr
+                    continue
 
             title = entry.get("title", "")
             content = entry.get("content", [{}])[0].get("value", "") if "content" in entry else ""
             summary = entry.get("summary", "")
             
             full_text = f"{title} {content} {summary}".upper()
-            
-            # Regulärer Ausdruck für Tarkov Codes (typischerweise 8 bis 16 Zeichen lang)
             potential_codes = re.findall(r'\b[A-Z0-9]{6,18}\b', full_text)
             for code in potential_codes:
                 if code not in ignore_list and not code.isdigit():
                     found_codes.append(code)
 
         unique_codes = list(set(found_codes))
-        print(f"[*] {len(unique_codes)} relevante Codes aus den letzten 365 Tagen gefunden.")
+        print(f"[*] {len(unique_codes)} potenzielle Codes gefunden.")
         return unique_codes
     except Exception as e:
         print(f"[-] Fehler beim Verarbeiten des RSS-Feeds: {e}")
@@ -88,20 +74,10 @@ def get_wiki_page():
         "Content-Type": "application/json",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36"
     }
-    
     res = requests.post(WIKI_URL, json={'query': query, 'variables': {'id': WIKI_PAGE_ID}}, headers=headers)
-    
-    if res.status_code != 200:
-        raise Exception(f"HTTP Fehler {res.status_code}. Server-Antwort: {res.text[:200]}")
-        
-    try:
-        data = res.json()
-    except Exception:
-        raise Exception(f"Antwort ist kein JSON (Status {res.status_code}): {res.text[:300]}")
-        
+    data = res.json()
     if 'errors' in data:
         raise Exception(f"Wiki.js API Fehler: {data['errors']}")
-        
     return data['data']['pages']['single']
 
 def update_wiki_page(page_data, new_content):
@@ -126,9 +102,8 @@ def update_wiki_page(page_data, new_content):
         "Content-Type": "application/json",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36"
     }
-    
     res = requests.post(WIKI_URL, json={'query': mutation, 'variables': variables}, headers=headers)
-    print("[+] Wiki-Update Rückmeldung:", res.json())
+    print("[+] Wiki-Update Server-Antwort:", res.json())
 
 def main():
     if not WIKI_URL or not WIKI_API_TOKEN or WIKI_PAGE_ID == 0:
@@ -143,6 +118,7 @@ def main():
     try:
         page_data = get_wiki_page()
         current_markdown = page_data['content']
+        print(f"[*] Wiki-Seite '{page_data['title']}' erfolgreich geladen ({len(current_markdown)} Zeichen).")
     except Exception as e:
         print(f"[-] Fehler beim Abrufen der Wiki-Seite: {e}")
         return
@@ -150,24 +126,37 @@ def main():
     added_count = 0
     updated_markdown = current_markdown
 
+    # Flexiblerer Regex-Suchmuster für den Tabellenkopf
+    table_header_pattern = r"(\| *Promo-Code *\| *Status *\| *Belohnungen / Inhalt *\|)"
+
+    if not re.search(table_header_pattern, updated_markdown, re.IGNORECASE):
+        print("[-] WARNUNG: Tabellenkopf im Wiki nicht gefunden!")
+        print("    Stelle sicher, dass deine Wiki-Seite folgenden Kopf enthält:")
+        print("    | Promo-Code | Status | Belohnungen / Inhalt |")
+        return
+
     for code in codes:
         if code not in current_markdown:
-            print(f"[!] Neuer Code entdeckt: {code}")
-            table_header = "| Promo-Code | Status | Belohnungen / Inhalt |\n| :--- | :---: | :--- |\n"
-            new_row = f"| `{code}` | 🟡 **UNGEPRÜFT (Auto-Add)** | *Neu auf Reddit entdeckt* |\n"
+            print(f"[!] Neuer Code wird angefügt: {code}")
+            new_row = f"\n| `{code}` | 🟡 **UNGEPRÜFT (Auto-Add)** | *Neu auf Reddit entdeckt* |"
             
-            if table_header in updated_markdown:
-                updated_markdown = updated_markdown.replace(table_header, table_header + new_row)
-                added_count += 1
+            # Fügt die Zeile direkt unter dem Tabellen-Header/Trennlinie ein
+            updated_markdown = re.sub(
+                r"(\| *:--- *\| *:---: *\| *:--- *\|)",
+                r"\1" + new_row,
+                updated_markdown,
+                count=1
+            )
+            added_count += 1
 
     if added_count > 0:
         today = datetime.datetime.now().strftime("%Y-%m-%d")
         updated_markdown = re.sub(r"Letzte Aktualisierung: \d{4}-\d{2}-\d{2}", f"Letzte Aktualisierung: {today}", updated_markdown)
         
+        print(f"[*] Sende Update für {added_count} neue Codes an das Wiki...")
         update_wiki_page(page_data, updated_markdown)
-        print(f"[+] {added_count} neue(n) Code(s) erfolgreich im Wiki eingetragen!")
     else:
-        print("[*] Alle gefundenen Codes existieren bereits im Wiki. Keine Aktualisierung nötig.")
+        print("[*] Alle gefundenen Codes sind bereits im Wiki vorhanden.")
 
 if __name__ == "__main__":
     main()
