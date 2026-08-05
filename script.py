@@ -4,9 +4,16 @@ import datetime
 import requests
 import feedparser
 
-# Konfiguration wird aus den GitHub Secrets geladen
+# Konfiguration aus den GitHub Secrets laden
 WIKI_URL = os.environ.get("WIKI_URL", "").strip()
 WIKI_API_TOKEN = os.environ.get("WIKI_API_TOKEN", "").strip()
+
+# Formatiere die URL korrekt für GraphQL
+if WIKI_URL:
+    if not WIKI_URL.startswith("http://") and not WIKI_URL.startswith("https://"):
+        WIKI_URL = "https://" + WIKI_URL
+    if not WIKI_URL.endswith("/graphql"):
+        WIKI_URL = WIKI_URL.rstrip("/") + "/graphql"
 
 raw_page_id = os.environ.get("WIKI_PAGE_ID", "0").strip().replace('"', '').replace("'", "")
 try:
@@ -18,7 +25,6 @@ except ValueError:
 def get_latest_reddit_codes():
     print("[*] Durchsuche Reddit (via RSS) nach neuen Codes...")
     
-    # Der RSS-Feed umgeht die 403-Sperre der JSON-API auf Cloud-Runnern
     rss_url = "https://www.reddit.com/r/EscapefromTarkov/search.rss?q=promo+code&sort=new&restrict_sr=on&t=week"
     
     try:
@@ -58,10 +64,22 @@ def get_wiki_page():
       }
     }
     """
-    headers = {"Authorization": f"Bearer {WIKI_API_TOKEN}"}
+    headers = {
+        "Authorization": f"Bearer {WIKI_API_TOKEN}",
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36"
+    }
+    
     res = requests.post(WIKI_URL, json={'query': query, 'variables': {'id': WIKI_PAGE_ID}}, headers=headers)
     
-    data = res.json()
+    if res.status_code != 200:
+        raise Exception(f"HTTP Fehler {res.status_code}. Server-Antwort: {res.text[:200]}")
+        
+    try:
+        data = res.json()
+    except Exception:
+        raise Exception(f"Antwort ist kein JSON (Status {res.status_code}): {res.text[:300]}")
+        
     if 'errors' in data:
         raise Exception(f"Wiki.js API Fehler: {data['errors']}")
         
@@ -84,7 +102,12 @@ def update_wiki_page(page_data, new_content):
         "description": page_data['description'],
         "path": page_data['path']
     }
-    headers = {"Authorization": f"Bearer {WIKI_API_TOKEN}"}
+    headers = {
+        "Authorization": f"Bearer {WIKI_API_TOKEN}",
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36"
+    }
+    
     res = requests.post(WIKI_URL, json={'query': mutation, 'variables': variables}, headers=headers)
     print("[+] Wiki-Update Rückmeldung:", res.json())
 
