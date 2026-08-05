@@ -21,25 +21,34 @@ except ValueError:
     WIKI_PAGE_ID = 0
 
 def get_latest_reddit_codes():
-    print("[*] Durchsuche Reddit (via RSS) nach neuen Codes...")
+    print("[*] Durchsuche Reddit nach Promo-Codes für die Vollversion (ab 2026)...")
+    
+    # Durchsuche Reddit-Posts der letzten Monate
     rss_url = "https://www.reddit.com/r/EscapefromTarkov/search.rss?q=promo+code&sort=new&restrict_sr=on&t=year"
     
     try:
-        feed = feedparser.parse(rss_url, agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) EFT-Bot/2.0")
+        feed = feedparser.parse(rss_url, agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) EFT-Bot/3.0")
         if feed.bozo and not feed.entries:
             print(f"[-] RSS Feed konnte nicht gelesen werden: {feed.get('bozo_exception', 'Unbekannter Fehler')}")
             return []
 
         found_codes = []
-        now = datetime.datetime.now(datetime.timezone.utc)
-        one_year_ago = now - datetime.timedelta(days=365)
-        ignore_list = ["TARKOV", "BSG", "BATTLESTATE", "GAME", "PATCH", "UPDATE", "NEWS", "DISCORD", "TWITCH", "REDDIT", "PROMO", "CODES", "CODE", "ESCAPE", "ARENA", "EDITION", "STEAM", "WIPE", "PVE", "PVP", "LIST"]
+        
+        # Strikter Datums-Filter: Nur Codes berücksichtigen, die NACH dem Beta-Ende (ab 01.01.2026) gepostet wurden
+        post_beta_cutoff = datetime.datetime(2026, 1, 1, 0, 0, 0, tzinfo=datetime.timezone.utc)
+
+        ignore_list = [
+            "TARKOV", "BSG", "BATTLESTATE", "GAME", "PATCH", "UPDATE", "NEWS", 
+            "DISCORD", "TWITCH", "REDDIT", "PROMO", "CODES", "CODE", "ESCAPE", 
+            "ARENA", "EDITION", "STEAM", "WIPE", "PVE", "PVP", "LIST", "BETA", "ALPHA"
+        ]
 
         for entry in feed.entries:
             published_parsed = entry.get("published_parsed")
             if published_parsed:
                 pub_date = datetime.datetime(*published_parsed[:6], tzinfo=datetime.timezone.utc)
-                if pub_date < one_year_ago:
+                # Ältere Beta-Posts ignorieren
+                if pub_date < post_beta_cutoff:
                     continue
 
             title = entry.get("title", "")
@@ -47,13 +56,15 @@ def get_latest_reddit_codes():
             summary = entry.get("summary", "")
             
             full_text = f"{title} {content} {summary}".upper()
+            
+            # Codes herausfiltern (6-18 Zeichen lang)
             potential_codes = re.findall(r'\b[A-Z0-9]{6,18}\b', full_text)
             for code in potential_codes:
                 if code not in ignore_list and not code.isdigit():
                     found_codes.append(code)
 
         unique_codes = list(set(found_codes))
-        print(f"[*] {len(unique_codes)} potenzielle Codes gefunden.")
+        print(f"[*] {len(unique_codes)} relevante Post-Beta Codes gefunden.")
         return unique_codes
     except Exception as e:
         print(f"[-] Fehler beim Verarbeiten des RSS-Feeds: {e}")
@@ -112,13 +123,12 @@ def main():
 
     codes = get_latest_reddit_codes()
     if not codes:
-        print("[*] Keine passenden Codes gefunden.")
+        print("[*] Keine neuen Codes nach dem Beta-Zeitraum gefunden.")
         return
 
     try:
         page_data = get_wiki_page()
         current_markdown = page_data['content']
-        print(f"[*] Wiki-Seite '{page_data['title']}' erfolgreich geladen ({len(current_markdown)} Zeichen).")
     except Exception as e:
         print(f"[-] Fehler beim Abrufen der Wiki-Seite: {e}")
         return
@@ -126,21 +136,17 @@ def main():
     added_count = 0
     updated_markdown = current_markdown
 
-    # Flexiblerer Regex-Suchmuster für den Tabellenkopf
     table_header_pattern = r"(\| *Promo-Code *\| *Status *\| *Belohnungen / Inhalt *\|)"
 
     if not re.search(table_header_pattern, updated_markdown, re.IGNORECASE):
         print("[-] WARNUNG: Tabellenkopf im Wiki nicht gefunden!")
-        print("    Stelle sicher, dass deine Wiki-Seite folgenden Kopf enthält:")
-        print("    | Promo-Code | Status | Belohnungen / Inhalt |")
         return
 
     for code in codes:
         if code not in current_markdown:
-            print(f"[!] Neuer Code wird angefügt: {code}")
-            new_row = f"\n| `{code}` | 🟡 **UNGEPRÜFT (Auto-Add)** | *Neu auf Reddit entdeckt* |"
+            print(f"[!] Neuer Post-Beta Code wird angefügt: {code}")
+            new_row = f"\n| `{code}` | 🟡 **UNGEPRÜFT** | *Neu entdeckt (Vollversion)* |"
             
-            # Fügt die Zeile direkt unter dem Tabellen-Header/Trennlinie ein
             updated_markdown = re.sub(
                 r"(\| *:--- *\| *:---: *\| *:--- *\|)",
                 r"\1" + new_row,
@@ -156,7 +162,7 @@ def main():
         print(f"[*] Sende Update für {added_count} neue Codes an das Wiki...")
         update_wiki_page(page_data, updated_markdown)
     else:
-        print("[*] Alle gefundenen Codes sind bereits im Wiki vorhanden.")
+        print("[*] Alle gefundenen Post-Beta Codes sind bereits im Wiki eingetragen.")
 
 if __name__ == "__main__":
     main()
