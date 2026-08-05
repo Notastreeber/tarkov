@@ -1,0 +1,31 @@
+name: EFT Promo Code Updater
+
+on:
+  schedule:
+    # Ausführung alle 3 Stunden
+    - cron: '0 */3 * * *'
+  # Erlaubt das manuelle Starten über die GitHub-Oberfläche
+  workflow_dispatch:
+
+jobs:
+  run-checker:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Repository auschecken
+        uses: actions/checkout@v4
+
+      - name: Python einrichten
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Abhängigkeiten installieren
+        run: pip install requests
+
+      - name: Skript ausführen
+        env:
+          WIKI_URL: ${{ secrets.WIKI_URL }}
+          WIKI_API_TOKEN: ${{ secrets.WIKI_API_TOKEN }}
+          WIKI_PAGE_ID: ${{ secrets.WIKI_PAGE_ID }}
+        run: python script.py
