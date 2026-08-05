@@ -20,7 +20,7 @@ def get_latest_reddit_codes():
     try:
         response = requests.get(url, headers=headers, timeout=10)
         
-        # Fallback auf alte Reddit-URL, falls die neue blockiert wird
+        # Fallback auf old.reddit.com, falls die Haupt-URL blockiert wird
         if response.status_code == 403:
             print("[!] Status 403 erhalten. Versuche Fallback-URL (old.reddit.com)...")
             url = "https://old.reddit.com/r/EscapefromTarkov/search.json?q=promo+code&sort=new&restrict_sr=on&t=week"
