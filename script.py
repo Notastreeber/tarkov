@@ -35,46 +35,44 @@ def fetch_codes_from_xterotex():
 
         html_text = response.text
 
-        # 1. Schneide den Text EXAKTLICH ab "SEASON CODES FÜR LAUNCHER" aus
-        pattern_start = r"SEASON\s+CODES\s+FÜR\s+LAUNCHER.*?(?=probieren|probiert|\n|<br)"
-        match_start = re.search(pattern_start, html_text, re.IGNORECASE | re.DOTALL)
+        # 1. HTML-Breaktags in Zeilenumbrüche umwandeln und Tags entfernen für saubere Zeilenanalyse
+        clean_text = re.sub(r'<br\s*/?>', '\n', html_text, flags=re.IGNORECASE)
+        clean_text = re.sub(r'</p>|</div>|</td>|</tr>', '\n', clean_text, flags=re.IGNORECASE)
+        
+        lines = clean_text.split('\n')
 
-        if not match_start:
-            print("[-] 'SEASON CODES FÜR LAUNCHER' nicht gefunden.")
-            return []
+        found_codes = []
+        inside_code_block = False
 
-        # Nimmt alles ab der Fundstelle
-        sub_text = html_text[match_start.start():]
+        # 2. Zeile für Zeile durchgehen
+        for line in lines:
+            line_str = re.sub(r'<[^>]+>', '', line).strip()  # HTML-Tags entfernen & Trimmen
 
-        # Beende das Lesen, sobald die nächste H1-H6 Überschrift oder ein Footer kommt
-        match_end = re.search(r"<h[1-6]|<footer", sub_text, re.IGNORECASE)
-        if match_end:
-            sub_text = sub_text[:match_end.start()]
+            # Suche nach der Startmarkierung: Enthält "SEASON CODES" und endet/beinhaltet einen Doppelpunkt ":"
+            if not inside_code_block:
+                if "SEASON CODES" in line_str.upper() and ":" in line_str:
+                    print(f"[+] Startzeile lokalisiert: '{line_str}'")
+                    inside_code_block = True
+                    continue
 
-        print("[+] Bereich 'SEASON CODES FÜR LAUNCHER' wurde präzise isoliert.")
+            # Sobald der Block aktiv ist:
+            if inside_code_block:
+                # Stopp-Bedingung: Erste Leerzeile oder Beginn einer neuen HTML-Struktur / Überschrift
+                if not line_str or line_str.startswith("<h") or line_str.startswith("<footer"):
+                    if found_codes:  # Stoppt nur, wenn bereits verarbeitete Daten vorliegen (Leerzeile nach den Codes)
+                        print("[+] Ende des Code-Blocks (Leerzeile/Strukturwechsel erreicht). Stop.")
+                        break
+                    continue
 
-        # 2. Regulärer Ausdruck:
-        # Matcht entweder Standard-Codes (z.B. WIPE, PCGAMESN) ODER Formate mit Bindestrichen (z.B. 6NU9-UFK1-W2TX-89RW-M96B)
-        found_raw = re.findall(r'\b[A-Z0-9]{4,}(?:-[A-Z0-9]{4,})*\b', sub_text.upper())
+                # Regex für Codes: Einzelne Worte (z.B. WIPE, PCGAMESN) ODER Formate mit Bindestrichen (z.B. 6NU9-UFK1-W2TX-89RW-M96B)
+                code_matches = re.findall(r'\b[A-Z0-9]{4,}(?:-[A-Z0-9]{4,})*\b', line_str.upper())
+                
+                for code in code_matches:
+                    # Filtert Fragmente mit Bindestrich am Anfang/Ende raus (z.B. -M96B)
+                    if not code.startswith("-") and not code.endswith("-") and not code.isdigit():
+                        found_codes.append(code)
 
-        # Wörtersperre für Sätze/Anweisungen im Text
-        ignore_list = {
-            "SEASON", "CODES", "LAUNCHER", "MANCHE", "FUNKTIONIEREN", 
-            "ANDERE", "NICHT", "SCHEINT", "VERBUGGT", "SEIN", "PROBIERT", 
-            "EINFACH", "ALLE", "NEWS", "GERMAN", "DEUTSCH", "TARKOV"
-        }
-
-        valid_codes = []
-        for token in found_raw:
-            token = token.strip()
-            # Ignoriere Sätze/Überschriften und reine Zahlen
-            if token not in ignore_list and not token.isdigit():
-                # Verhindert kaputte Schnipsel wie -M96B
-                if not token.startswith("-") and not token.endswith("-"):
-                    valid_codes.append(token)
-
-        # Duplikate entfernen, Reihenfolge behalten
-        unique_codes = list(dict.fromkeys(valid_codes))
+        unique_codes = list(dict.fromkeys(found_codes))
         print(f"[*] {len(unique_codes)} exakte Codes extrahiert: {unique_codes}")
         return unique_codes
 
@@ -159,7 +157,7 @@ def main():
 
     codes = fetch_codes_from_xterotex()
     if not codes:
-        print("[*] Keine gültigen Codes im Zielbereich auf xterotex.de gefunden.")
+        print("[*] Keine gültigen Codes im isolierten Abschnitt gefunden.")
         return
 
     try:
