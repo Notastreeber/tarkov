@@ -2,8 +2,9 @@ import os
 import re
 import datetime
 import requests
+import feedparser
 
-
+# Konfiguration wird aus den GitHub Secrets geladen
 WIKI_URL = os.environ.get("WIKI_URL", "").strip()
 WIKI_API_TOKEN = os.environ.get("WIKI_API_TOKEN", "").strip()
 
@@ -15,33 +16,27 @@ except ValueError:
     WIKI_PAGE_ID = 0
 
 def get_latest_reddit_codes():
-    print("[*] Durchsuche Reddit nach neuen Codes...")
-    url = "https://www.reddit.com/r/EscapefromTarkov/search.json?q=promo+code&sort=new&restrict_sr=on&t=week"
+    print("[*] Durchsuche Reddit (via RSS) nach neuen Codes...")
     
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-    }
+    # Der RSS-Feed umgeht die 403-Sperre der JSON-API auf Cloud-Runnern
+    rss_url = "https://www.reddit.com/r/EscapefromTarkov/search.rss?q=promo+code&sort=new&restrict_sr=on&t=week"
     
     try:
-        response = requests.get(url, headers=headers, timeout=10)
+        feed = feedparser.parse(rss_url, agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) EFT-Bot/2.0")
         
-        if response.status_code == 403:
-            print("[!] Status 403 auf reddit.com – versuche old.reddit.com...")
-            url = "https://old.reddit.com/r/EscapefromTarkov/search.json?q=promo+code&sort=new&restrict_sr=on&t=week"
-            response = requests.get(url, headers=headers, timeout=10)
-
-        if response.status_code != 200:
-            print(f"[-] Reddit-Abfrage fehlgeschlagen: HTTP Status {response.status_code}")
+        if feed.bozo and not feed.entries:
+            print(f"[-] RSS Feed konnte nicht gelesen werden: {feed.get('bozo_exception', 'Unbekannter Fehler')}")
             return []
-            
-        posts = response.json().get("data", {}).get("children", [])
-        found_codes = []
-        ignore_list = ["TARKOV", "BSG", "BATTLESTATE", "GAME", "PATCH", "UPDATE", "NEWS", "DISCORD", "TWITCH", "REDDIT"]
 
-        for post in posts:
-            title = post.get("data", {}).get("title", "")
-            body = post.get("data", {}).get("selftext", "")
-            full_text = f"{title} {body}".upper()
+        found_codes = []
+        ignore_list = ["TARKOV", "BSG", "BATTLESTATE", "GAME", "PATCH", "UPDATE", "NEWS", "DISCORD", "TWITCH", "REDDIT", "PROMO"]
+
+        for entry in feed.entries:
+            title = entry.get("title", "")
+            content = entry.get("content", [{}])[0].get("value", "") if "content" in entry else ""
+            summary = entry.get("summary", "")
+            
+            full_text = f"{title} {content} {summary}".upper()
             
             potential_codes = re.findall(r'\b[A-Z0-9-]{4,20}\b', full_text)
             for code in potential_codes:
@@ -50,7 +45,7 @@ def get_latest_reddit_codes():
 
         return list(set(found_codes))
     except Exception as e:
-        print(f"[-] Fehler beim Laden von Reddit: {e}")
+        print(f"[-] Fehler beim Verarbeiten des RSS-Feeds: {e}")
         return []
 
 def get_wiki_page():
