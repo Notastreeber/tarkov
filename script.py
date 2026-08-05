@@ -21,7 +21,7 @@ except ValueError:
     WIKI_PAGE_ID = 0
 
 def get_latest_reddit_codes():
-    print("[*] Durchsuche Reddit nach Promo-Codes für die Vollversion (ab 2026)...")
+    print("[*] Durchsuche Reddit nach Promo-Codes...")
     rss_url = "https://www.reddit.com/r/EscapefromTarkov/search.rss?q=promo+code&sort=new&restrict_sr=on&t=year"
     
     try:
@@ -84,9 +84,15 @@ def get_wiki_page():
         raise Exception(f"Wiki.js API Fehler: {data['errors']}")
     return data['data']['pages']['single']
 
-def update_wiki_page(page_data, new_content):
-    # GraphQL Mutation mit explizitem Publisher/Render-Trigger
-    mutation = """
+def update_and_render_wiki_page(page_data, new_content):
+    headers = {
+        "Authorization": f"Bearer {WIKI_API_TOKEN}",
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36"
+    }
+
+    # 1. Inhalte in der Datenbank aktualisieren
+    mutation_update = """
     mutation ($id: Int!, $content: String!, $title: String!, $description: String!, $path: String!, $locale: String!) {
       pages {
         update(
@@ -96,7 +102,6 @@ def update_wiki_page(page_data, new_content):
           description: $description, 
           editor: "markdown", 
           isPublished: true, 
-          isPrivate: false,
           path: $path,
           locale: $locale
         ) {
@@ -113,16 +118,13 @@ def update_wiki_page(page_data, new_content):
         "path": page_data['path'],
         "locale": page_data.get('locale', 'de')
     }
-    headers = {
-        "Authorization": f"Bearer {WIKI_API_TOKEN}",
-        "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36"
-    }
-    res = requests.post(WIKI_URL, json={'query': mutation, 'variables': variables}, headers=headers)
-    print("[+] Wiki-Update Server-Antwort:", res.json())
+    
+    res_update = requests.post(WIKI_URL, json={'query': mutation_update, 'variables': variables}, headers=headers)
+    print("[+] Wiki-Update Server-Antwort:", res_update.json())
 
-    # Sendet zusätzlich ein Flush/Render-Signal an die Seite
-    render_mutation = """
+    # 2. Re-Rendering-Befehl an das Wiki senden (HTML-Cache leeren für diese Seite)
+    print("[*] Sende Re-Rendering Befehl an Wiki.js...")
+    mutation_render = """
     mutation ($id: Int!) {
       pages {
         render(id: $id) {
@@ -131,7 +133,8 @@ def update_wiki_page(page_data, new_content):
       }
     }
     """
-    requests.post(WIKI_URL, json={'query': render_mutation, 'variables': {'id': WIKI_PAGE_ID}}, headers=headers)
+    res_render = requests.post(WIKI_URL, json={'query': mutation_render, 'variables': {'id': WIKI_PAGE_ID}}, headers=headers)
+    print("[+] Re-Rendering Server-Antwort:", res_render.json())
 
 def main():
     if not WIKI_URL or not WIKI_API_TOKEN or WIKI_PAGE_ID == 0:
@@ -176,8 +179,8 @@ def main():
         today = datetime.datetime.now().strftime("%Y-%m-%d")
         updated_markdown = re.sub(r"Letzte Aktualisierung: \d{4}-\d{2}-\d{2}", f"Letzte Aktualisierung: {today}", updated_markdown)
         
-        print(f"[*] Sende Update und erzwinge Seiten-Rendering...")
-        update_wiki_page(page_data, updated_markdown)
+        update_and_render_wiki_page(page_data, updated_markdown)
+        print(f"[+] {added_count} neue(r) Code(s) eingetragen und Seite frisch gerendert!")
     else:
         print("[*] Alle gefundenen Codes sind bereits im Wiki vorhanden.")
 
