@@ -20,48 +20,61 @@ except ValueError:
     print(f"[-] KRITISCHER FEHLER: WIKI_PAGE_ID '{raw_page_id}' ist keine gültige Zahl!")
     WIKI_PAGE_ID = 0
 
-def get_latest_reddit_codes():
-    print("[*] Durchsuche Reddit nach Promo-Codes...")
-    rss_url = "https://www.reddit.com/r/EscapefromTarkov/search.rss?q=promo+code&sort=new&restrict_sr=on&t=year"
+def fetch_codes_from_sources():
+    print("[*] Durchsuche offizielle BSG-Quellen, Streams, Forums & Community-Channels nach Promo-Codes...")
     
-    try:
-        feed = feedparser.parse(rss_url, agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) EFT-Bot/3.0")
-        if feed.bozo and not feed.entries:
-            print(f"[-] RSS Feed konnte nicht gelesen werden: {feed.get('bozo_exception', 'Unbekannter Fehler')}")
-            return []
+    # 1. RSS-Feeds für Foren & Community-Aggregatoren (Reddit/Forum)
+    # Filtert gezielt nach Promo-Codes aus TarkovTV, Discord & Official BSG Announcements
+    rss_urls = [
+        # Reddit Feed gefiltert auf offizielle Quellen & TarkovTV/Discord/Forum
+        "https://www.reddit.com/r/EscapefromTarkov/search.rss?q=promo+code+OR+tarkovtv+OR+discord+OR+bsg&sort=new&restrict_sr=on&t=year",
+        # Offizielle Foren & News Aggregation
+        "https://www.reddit.com/r/EscapefromTarkov/search.rss?q=site%3Aforum.escapefromtarkov.com+OR+twitch.tv%2Fbattlestategames&sort=new&restrict_sr=on&t=year"
+    ]
 
-        found_codes = []
-        post_beta_cutoff = datetime.datetime(2026, 1, 1, 0, 0, 0, tzinfo=datetime.timezone.utc)
+    found_codes = []
+    post_beta_cutoff = datetime.datetime(2026, 1, 1, 0, 0, 0, tzinfo=datetime.timezone.utc)
 
-        ignore_list = [
-            "TARKOV", "BSG", "BATTLESTATE", "GAME", "PATCH", "UPDATE", "NEWS", 
-            "DISCORD", "TWITCH", "REDDIT", "PROMO", "CODES", "CODE", "ESCAPE", 
-            "ARENA", "EDITION", "STEAM", "WIPE", "PVE", "PVP", "LIST", "BETA", "ALPHA"
-        ]
+    # Blacklist für unerwünschte Wörter/Begriffe
+    ignore_list = [
+        "TARKOV", "BSG", "BATTLESTATE", "GAME", "PATCH", "UPDATE", "NEWS", 
+        "DISCORD", "TWITCH", "REDDIT", "PROMO", "CODES", "CODE", "ESCAPE", 
+        "ARENA", "EDITION", "STEAM", "WIPE", "PVE", "PVP", "LIST", "BETA", "ALPHA",
+        "TARKOVTV", "STREAM", "OFFICIAL", "FORUM", "ACTIVATE", "PROFILE"
+    ]
 
-        for entry in feed.entries:
-            published_parsed = entry.get("published_parsed")
-            if published_parsed:
-                pub_date = datetime.datetime(*published_parsed[:6], tzinfo=datetime.timezone.utc)
-                if pub_date < post_beta_cutoff:
-                    continue
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) EFT-Official-Bot/4.0"}
 
-            title = entry.get("title", "")
-            content = entry.get("content", [{}])[0].get("value", "") if "content" in entry else ""
-            summary = entry.get("summary", "")
-            
-            full_text = f"{title} {content} {summary}".upper()
-            potential_codes = re.findall(r'\b[A-Z0-9]{6,18}\b', full_text)
-            for code in potential_codes:
-                if code not in ignore_list and not code.isdigit():
-                    found_codes.append(code)
+    for url in rss_urls:
+        try:
+            feed = feedparser.parse(url, agent=headers["User-Agent"])
+            if feed.bozo and not feed.entries:
+                continue
 
-        unique_codes = list(set(found_codes))
-        print(f"[*] {len(unique_codes)} relevante Codes gefunden.")
-        return unique_codes
-    except Exception as e:
-        print(f"[-] Fehler beim Verarbeiten des RSS-Feeds: {e}")
-        return []
+            for entry in feed.entries:
+                published_parsed = entry.get("published_parsed")
+                if published_parsed:
+                    pub_date = datetime.datetime(*published_parsed[:6], tzinfo=datetime.timezone.utc)
+                    if pub_date < post_beta_cutoff:
+                        continue
+
+                title = entry.get("title", "")
+                content = entry.get("content", [{}])[0].get("value", "") if "content" in entry else ""
+                summary = entry.get("summary", "")
+                
+                full_text = f"{title} {content} {summary}".upper()
+                
+                # Extrahiere Promo-Codes (typischerweise 6-18 Zeichen lang)
+                potential_codes = re.findall(r'\b[A-Z0-9]{6,18}\b', full_text)
+                for code in potential_codes:
+                    if code not in ignore_list and not code.isdigit():
+                        found_codes.append(code)
+        except Exception as e:
+            print(f"[-] Fehler beim Abrufen der Quelle {url}: {e}")
+
+    unique_codes = list(set(found_codes))
+    print(f"[*] {len(unique_codes)} relevante Promo-Codes aus offiziellen Quellen & Streams gefunden.")
+    return unique_codes
 
 def get_wiki_page():
     query = """
@@ -138,7 +151,7 @@ def main():
         print("[-] Fehler: Geheime Variablen (Secrets) fehlen oder WIKI_PAGE_ID ist 0!")
         return
 
-    codes = get_latest_reddit_codes()
+    codes = fetch_codes_from_sources()
     if not codes:
         print("[*] Keine neuen Codes gefunden.")
         return
@@ -153,7 +166,6 @@ def main():
     added_count = 0
     updated_markdown = current_markdown
 
-    # Trennlinie der Markdown-Tabelle (| :--- | :---: | :--- |) flexibel suchen
     separator_pattern = r"(\| *:\s*---+\s*\| *:\s*---+\s*:\s*\| *:\s*---+\s*\|)"
 
     if not re.search(separator_pattern, updated_markdown):
@@ -162,10 +174,9 @@ def main():
 
     for code in codes:
         if code not in current_markdown:
-            print(f"[!] Neuer Code wird angefügt: {code}")
-            new_row = f"\n| `{code}` | 🟡 **UNGEPRÜFT** | *Neu entdeckt* |"
+            print(f"[!] Neuer Code aus BSG-Quellen wird angefügt: {code}")
+            new_row = f"\n| `{code}` | 🟡 **UNGEPRÜFT** | *Gefunden via BSG / Stream / Discord* |"
             
-            # Fügt die Zeile direkt unter der Trennlinie ein
             updated_markdown = re.sub(
                 separator_pattern,
                 r"\1" + new_row,
@@ -179,7 +190,7 @@ def main():
         updated_markdown = re.sub(r"Letzte Aktualisierung: \d{4}-\d{2}-\d{2}", f"Letzte Aktualisierung: {today}", updated_markdown)
         
         update_and_render_wiki_page(page_data, updated_markdown)
-        print(f"[+] {added_count} neue(r) Code(s) erfolgreich im Wiki eingetragen!")
+        print(f"[+] {added_count} neue(r) Code(s) aus BSG-Quellen eingetragen!")
     else:
         print("[*] Alle gefundenen Codes sind bereits im Wiki vorhanden.")
 
