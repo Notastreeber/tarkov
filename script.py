@@ -22,8 +22,6 @@ except ValueError:
 
 def get_latest_reddit_codes():
     print("[*] Durchsuche Reddit nach Promo-Codes für die Vollversion (ab 2026)...")
-    
-    # Durchsuche Reddit-Posts der letzten Monate
     rss_url = "https://www.reddit.com/r/EscapefromTarkov/search.rss?q=promo+code&sort=new&restrict_sr=on&t=year"
     
     try:
@@ -33,8 +31,6 @@ def get_latest_reddit_codes():
             return []
 
         found_codes = []
-        
-        # Strikter Datums-Filter: Nur Codes berücksichtigen, die NACH dem Beta-Ende (ab 01.01.2026) gepostet wurden
         post_beta_cutoff = datetime.datetime(2026, 1, 1, 0, 0, 0, tzinfo=datetime.timezone.utc)
 
         ignore_list = [
@@ -47,7 +43,6 @@ def get_latest_reddit_codes():
             published_parsed = entry.get("published_parsed")
             if published_parsed:
                 pub_date = datetime.datetime(*published_parsed[:6], tzinfo=datetime.timezone.utc)
-                # Ältere Beta-Posts ignorieren
                 if pub_date < post_beta_cutoff:
                     continue
 
@@ -56,15 +51,13 @@ def get_latest_reddit_codes():
             summary = entry.get("summary", "")
             
             full_text = f"{title} {content} {summary}".upper()
-            
-            # Codes herausfiltern (6-18 Zeichen lang)
             potential_codes = re.findall(r'\b[A-Z0-9]{6,18}\b', full_text)
             for code in potential_codes:
                 if code not in ignore_list and not code.isdigit():
                     found_codes.append(code)
 
         unique_codes = list(set(found_codes))
-        print(f"[*] {len(unique_codes)} relevante Post-Beta Codes gefunden.")
+        print(f"[*] {len(unique_codes)} relevante Codes gefunden.")
         return unique_codes
     except Exception as e:
         print(f"[-] Fehler beim Verarbeiten des RSS-Feeds: {e}")
@@ -75,7 +68,7 @@ def get_wiki_page():
     query ($id: Int!) {
       pages {
         single(id: $id) {
-          content title description path
+          content title description path locale
         }
       }
     }
@@ -92,10 +85,21 @@ def get_wiki_page():
     return data['data']['pages']['single']
 
 def update_wiki_page(page_data, new_content):
+    # GraphQL Mutation mit explizitem Publisher/Render-Trigger
     mutation = """
-    mutation ($id: Int!, $content: String!, $title: String!, $description: String!, $path: String!) {
+    mutation ($id: Int!, $content: String!, $title: String!, $description: String!, $path: String!, $locale: String!) {
       pages {
-        update(id: $id, content: $content, title: $title, description: $description, editor: "markdown", isPublished: true, path: $path) {
+        update(
+          id: $id, 
+          content: $content, 
+          title: $title, 
+          description: $description, 
+          editor: "markdown", 
+          isPublished: true, 
+          isPrivate: false,
+          path: $path,
+          locale: $locale
+        ) {
           responseResult { succeeded message }
         }
       }
@@ -106,7 +110,8 @@ def update_wiki_page(page_data, new_content):
         "content": new_content,
         "title": page_data['title'],
         "description": page_data['description'],
-        "path": page_data['path']
+        "path": page_data['path'],
+        "locale": page_data.get('locale', 'de')
     }
     headers = {
         "Authorization": f"Bearer {WIKI_API_TOKEN}",
@@ -116,6 +121,18 @@ def update_wiki_page(page_data, new_content):
     res = requests.post(WIKI_URL, json={'query': mutation, 'variables': variables}, headers=headers)
     print("[+] Wiki-Update Server-Antwort:", res.json())
 
+    # Sendet zusätzlich ein Flush/Render-Signal an die Seite
+    render_mutation = """
+    mutation ($id: Int!) {
+      pages {
+        render(id: $id) {
+          responseResult { succeeded message }
+        }
+      }
+    }
+    """
+    requests.post(WIKI_URL, json={'query': render_mutation, 'variables': {'id': WIKI_PAGE_ID}}, headers=headers)
+
 def main():
     if not WIKI_URL or not WIKI_API_TOKEN or WIKI_PAGE_ID == 0:
         print("[-] Fehler: Geheime Variablen (Secrets) fehlen oder WIKI_PAGE_ID ist 0!")
@@ -123,7 +140,7 @@ def main():
 
     codes = get_latest_reddit_codes()
     if not codes:
-        print("[*] Keine neuen Codes nach dem Beta-Zeitraum gefunden.")
+        print("[*] Keine neuen Codes gefunden.")
         return
 
     try:
@@ -144,8 +161,8 @@ def main():
 
     for code in codes:
         if code not in current_markdown:
-            print(f"[!] Neuer Post-Beta Code wird angefügt: {code}")
-            new_row = f"\n| `{code}` | 🟡 **UNGEPRÜFT** | *Neu entdeckt (Vollversion)* |"
+            print(f"[!] Neuer Code wird angefügt: {code}")
+            new_row = f"\n| `{code}` | 🟡 **UNGEPRÜFT** | *Neu entdeckt* |"
             
             updated_markdown = re.sub(
                 r"(\| *:--- *\| *:---: *\| *:--- *\|)",
@@ -159,10 +176,10 @@ def main():
         today = datetime.datetime.now().strftime("%Y-%m-%d")
         updated_markdown = re.sub(r"Letzte Aktualisierung: \d{4}-\d{2}-\d{2}", f"Letzte Aktualisierung: {today}", updated_markdown)
         
-        print(f"[*] Sende Update für {added_count} neue Codes an das Wiki...")
+        print(f"[*] Sende Update und erzwinge Seiten-Rendering...")
         update_wiki_page(page_data, updated_markdown)
     else:
-        print("[*] Alle gefundenen Post-Beta Codes sind bereits im Wiki eingetragen.")
+        print("[*] Alle gefundenen Codes sind bereits im Wiki vorhanden.")
 
 if __name__ == "__main__":
     main()
