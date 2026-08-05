@@ -3,6 +3,7 @@ import re
 import datetime
 import requests
 
+
 WIKI_URL = os.environ.get("WIKI_URL", "").strip()
 WIKI_API_TOKEN = os.environ.get("WIKI_API_TOKEN", "").strip()
 
