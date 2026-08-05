@@ -23,9 +23,10 @@ except ValueError:
     WIKI_PAGE_ID = 0
 
 def get_latest_reddit_codes():
-    print("[*] Durchsuche Reddit (via RSS) nach neuen Codes...")
+    print("[*] Durchsuche Reddit (via RSS) nach neuen Codes (max. 1 Jahr alt)...")
     
-    rss_url = "https://www.reddit.com/r/EscapefromTarkov/search.rss?q=promo+code&sort=new&restrict_sr=on&t=week"
+    # RSS-Search beschränken (t=year beschränkt die Ergebnisse auf die letzten 365 Tage)
+    rss_url = "https://www.reddit.com/r/EscapefromTarkov/search.rss?q=promo+code&sort=new&restrict_sr=on&t=year"
     
     try:
         feed = feedparser.parse(rss_url, agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) EFT-Bot/2.0")
@@ -35,21 +36,39 @@ def get_latest_reddit_codes():
             return []
 
         found_codes = []
-        ignore_list = ["TARKOV", "BSG", "BATTLESTATE", "GAME", "PATCH", "UPDATE", "NEWS", "DISCORD", "TWITCH", "REDDIT", "PROMO"]
+        now = datetime.datetime.now(datetime.timezone.utc)
+        one_year_ago = now - datetime.timedelta(days=365)
+
+        # Wortliste zum Filtern allgemeiner Begriffe/Tags
+        ignore_list = [
+            "TARKOV", "BSG", "BATTLESTATE", "GAME", "PATCH", "UPDATE", "NEWS", 
+            "DISCORD", "TWITCH", "REDDIT", "PROMO", "CODES", "CODE", "ESCAPE", 
+            "ARENA", "EDITION", "STEAM", "WIPE", "PVE", "PVP", "LIST"
+        ]
 
         for entry in feed.entries:
+            # Erstellungsdatum des Posts prüfen
+            published_parsed = entry.get("published_parsed")
+            if published_parsed:
+                pub_date = datetime.datetime(*published_parsed[:6], tzinfo=datetime.timezone.utc)
+                if pub_date < one_year_ago:
+                    continue  # Überspringen, wenn älter als 1 Jahr
+
             title = entry.get("title", "")
             content = entry.get("content", [{}])[0].get("value", "") if "content" in entry else ""
             summary = entry.get("summary", "")
             
             full_text = f"{title} {content} {summary}".upper()
             
-            potential_codes = re.findall(r'\b[A-Z0-9-]{4,20}\b', full_text)
+            # Regulärer Ausdruck für Tarkov Codes (typischerweise 8 bis 16 Zeichen lang)
+            potential_codes = re.findall(r'\b[A-Z0-9]{6,18}\b', full_text)
             for code in potential_codes:
                 if code not in ignore_list and not code.isdigit():
                     found_codes.append(code)
 
-        return list(set(found_codes))
+        unique_codes = list(set(found_codes))
+        print(f"[*] {len(unique_codes)} relevante Codes aus den letzten 365 Tagen gefunden.")
+        return unique_codes
     except Exception as e:
         print(f"[-] Fehler beim Verarbeiten des RSS-Feeds: {e}")
         return []
@@ -118,7 +137,7 @@ def main():
 
     codes = get_latest_reddit_codes()
     if not codes:
-        print("[*] Keine neuen Codes auf Reddit gefunden.")
+        print("[*] Keine passenden Codes gefunden.")
         return
 
     try:
@@ -143,7 +162,7 @@ def main():
 
     if added_count > 0:
         today = datetime.datetime.now().strftime("%Y-%m-%d")
-        updated_markdown = re.sub(r"date: \d{4}-\d{2}-\d{2}", f"date: {today}", updated_markdown)
+        updated_markdown = re.sub(r"Letzte Aktualisierung: \d{4}-\d{2}-\d{2}", f"Letzte Aktualisierung: {today}", updated_markdown)
         
         update_wiki_page(page_data, updated_markdown)
         print(f"[+] {added_count} neue(n) Code(s) erfolgreich im Wiki eingetragen!")
