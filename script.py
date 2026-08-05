@@ -3,26 +3,29 @@ import re
 import datetime
 import requests
 
-# Konfiguration wird automatisch aus den GitHub Secrets geladen
-WIKI_URL = os.environ.get("WIKI_URL")
-WIKI_API_TOKEN = os.environ.get("WIKI_API_TOKEN")
-WIKI_PAGE_ID = int(os.environ.get("WIKI_PAGE_ID", "0"))
+WIKI_URL = os.environ.get("WIKI_URL", "").strip()
+WIKI_API_TOKEN = os.environ.get("WIKI_API_TOKEN", "").strip()
+
+raw_page_id = os.environ.get("WIKI_PAGE_ID", "0").strip().replace('"', '').replace("'", "")
+try:
+    WIKI_PAGE_ID = int(raw_page_id)
+except ValueError:
+    print(f"[-] KRITISCHER FEHLER: WIKI_PAGE_ID '{raw_page_id}' ist keine gültige Zahl!")
+    WIKI_PAGE_ID = 0
 
 def get_latest_reddit_codes():
     print("[*] Durchsuche Reddit nach neuen Codes...")
     url = "https://www.reddit.com/r/EscapefromTarkov/search.json?q=promo+code&sort=new&restrict_sr=on&t=week"
     
-    # Individueller User-Agent umgeht die 403-Sperre von Cloud-Runnern
     headers = {
-        "User-Agent": "script:eft-promo-updater:v1.1 (by /u/custom_tarkov_bot)"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     }
     
     try:
         response = requests.get(url, headers=headers, timeout=10)
         
-        # Fallback auf old.reddit.com, falls die Haupt-URL blockiert wird
         if response.status_code == 403:
-            print("[!] Status 403 erhalten. Versuche Fallback-URL (old.reddit.com)...")
+            print("[!] Status 403 auf reddit.com – versuche old.reddit.com...")
             url = "https://old.reddit.com/r/EscapefromTarkov/search.json?q=promo+code&sort=new&restrict_sr=on&t=week"
             response = requests.get(url, headers=headers, timeout=10)
 
@@ -91,7 +94,7 @@ def update_wiki_page(page_data, new_content):
 
 def main():
     if not WIKI_URL or not WIKI_API_TOKEN or WIKI_PAGE_ID == 0:
-        print("[-] Fehler: Geheime Variablen (Secrets) fehlen oder wurden nicht geladen!")
+        print("[-] Fehler: Geheime Variablen (Secrets) fehlen oder WIKI_PAGE_ID ist 0!")
         return
 
     codes = get_latest_reddit_codes()
