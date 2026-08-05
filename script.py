@@ -2,7 +2,6 @@ import os
 import re
 import datetime
 import requests
-import feedparser
 
 WIKI_URL = os.environ.get("WIKI_URL", "").strip()
 WIKI_API_TOKEN = os.environ.get("WIKI_API_TOKEN", "").strip()
@@ -20,61 +19,60 @@ except ValueError:
     print(f"[-] KRITISCHER FEHLER: WIKI_PAGE_ID '{raw_page_id}' ist keine gültige Zahl!")
     WIKI_PAGE_ID = 0
 
-def fetch_codes_from_sources():
-    print("[*] Durchsuche offizielle BSG-Quellen, Streams, Forums & Community-Channels nach Promo-Codes...")
+def fetch_codes_from_xterotex():
+    url = "https://xterotex.de/de/news/"
+    print(f"[*] Durchsuche exklusiv die Quelle: {url}")
     
-    # 1. RSS-Feeds für Foren & Community-Aggregatoren (Reddit/Forum)
-    # Filtert gezielt nach Promo-Codes aus TarkovTV, Discord & Official BSG Announcements
-    rss_urls = [
-        # Reddit Feed gefiltert auf offizielle Quellen & TarkovTV/Discord/Forum
-        "https://www.reddit.com/r/EscapefromTarkov/search.rss?q=promo+code+OR+tarkovtv+OR+discord+OR+bsg&sort=new&restrict_sr=on&t=year",
-        # Offizielle Foren & News Aggregation
-        "https://www.reddit.com/r/EscapefromTarkov/search.rss?q=site%3Aforum.escapefromtarkov.com+OR+twitch.tv%2Fbattlestategames&sort=new&restrict_sr=on&t=year"
-    ]
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36"
+    }
 
-    found_codes = []
-    post_beta_cutoff = datetime.datetime(2026, 1, 1, 0, 0, 0, tzinfo=datetime.timezone.utc)
+    try:
+        response = requests.get(url, headers=headers, timeout=15)
+        if response.status_code != 200:
+            print(f"[-] Fehler beim Laden der Webseite. Statuscode: {response.status_code}")
+            return []
 
-    # Blacklist für unerwünschte Wörter/Begriffe
-    ignore_list = [
-        "TARKOV", "BSG", "BATTLESTATE", "GAME", "PATCH", "UPDATE", "NEWS", 
-        "DISCORD", "TWITCH", "REDDIT", "PROMO", "CODES", "CODE", "ESCAPE", 
-        "ARENA", "EDITION", "STEAM", "WIPE", "PVE", "PVP", "LIST", "BETA", "ALPHA",
-        "TARKOVTV", "STREAM", "OFFICIAL", "FORUM", "ACTIVATE", "PROFILE"
-    ]
+        html_text = response.text
 
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) EFT-Official-Bot/4.0"}
+        # 1. Isolieren des Bereichs nach "SEASON CODES FÜR LAUNCHER" oder "CODES FÜR LAUNCHER"
+        section_match = re.search(r"(SEASON\s+CODES\s+FÜR\s+LAUNCHER|CODES\s+FÜR\s+LAUNCHER)(.*?)(?=<h[1-6]|<footer|$)", html_text, re.IGNORECASE | re.DOTALL)
+        
+        target_text = ""
+        if section_match:
+            target_text = section_match.group(2)
+            print("[+] Bereich 'SEASON CODES FÜR LAUNCHER' erfolgreich auf xterotex.de lokalisiert.")
+        else:
+            print("[-] Hinweis: Spezifische Überschrift nicht exakt gefunden. Durchsuche den gesamten Seiteninhalt...")
+            target_text = html_text
 
-    for url in rss_urls:
-        try:
-            feed = feedparser.parse(url, agent=headers["User-Agent"])
-            if feed.bozo and not feed.entries:
-                continue
+        # 2. Regulärer Ausdruck für Tarkov Promo-Codes (Typische Formate wie H77WTXS6FFH1, 1U0MUER etc.)
+        # Extrahiert alfanumerische Zeichenketten zwischen 6 und 20 Zeichen
+        raw_candidates = re.findall(r'\b[A-Z0-9]{6,20}\b', target_text.upper())
 
-            for entry in feed.entries:
-                published_parsed = entry.get("published_parsed")
-                if published_parsed:
-                    pub_date = datetime.datetime(*published_parsed[:6], tzinfo=datetime.timezone.utc)
-                    if pub_date < post_beta_cutoff:
-                        continue
+        # Blacklist für Wörter/HTML-Attribute, die in Webseiten-Quelltexten vorkommen
+        black_list = {
+            "LAUNCHER", "SEASON", "CODES", "CODE", "NEWS", "GERMAN", "DEUTSCH",
+            "TARKOV", "ESCAPE", "BATTLESTATE", "HTTP", "HTTPS", "CLASS", "STYLE",
+            "DIV", "SPAN", "HREF", "SRC", "WIDTH", "HEIGHT", "COLOR", "PADDING",
+            "MARGIN", "DISPLAY", "CONTAINER", "CONTENT", "FOOTER", "HEADER", "NAV"
+        }
 
-                title = entry.get("title", "")
-                content = entry.get("content", [{}])[0].get("value", "") if "content" in entry else ""
-                summary = entry.get("summary", "")
-                
-                full_text = f"{title} {content} {summary}".upper()
-                
-                # Extrahiere Promo-Codes (typischerweise 6-18 Zeichen lang)
-                potential_codes = re.findall(r'\b[A-Z0-9]{6,18}\b', full_text)
-                for code in potential_codes:
-                    if code not in ignore_list and not code.isdigit():
-                        found_codes.append(code)
-        except Exception as e:
-            print(f"[-] Fehler beim Abrufen der Quelle {url}: {e}")
+        found_codes = []
+        for candidate in raw_candidates:
+            # Nur Strings zulassen, die keine rein Zahlen oder reine Blacklist-Wörter sind
+            if candidate not in black_list and not candidate.isdigit():
+                # Mindestens ein Buchstabe und eine Zahl ODER eine typische Code-Länge
+                if any(c.isdigit() for c in candidate) or len(candidate) >= 8:
+                    found_codes.append(candidate)
 
-    unique_codes = list(set(found_codes))
-    print(f"[*] {len(unique_codes)} relevante Promo-Codes aus offiziellen Quellen & Streams gefunden.")
-    return unique_codes
+        unique_codes = list(dict.fromkeys(found_codes))  # Behält die Reihenfolge bei und entfernt Duplikate
+        print(f"[*] {len(unique_codes)} valide Codes von xterotex.de ausgelesen: {unique_codes}")
+        return unique_codes
+
+    except Exception as e:
+        print(f"[-] Fehler beim Abrufen der Seite xterotex.de: {e}")
+        return []
 
 def get_wiki_page():
     query = """
@@ -151,9 +149,9 @@ def main():
         print("[-] Fehler: Geheime Variablen (Secrets) fehlen oder WIKI_PAGE_ID ist 0!")
         return
 
-    codes = fetch_codes_from_sources()
+    codes = fetch_codes_from_xterotex()
     if not codes:
-        print("[*] Keine neuen Codes gefunden.")
+        print("[*] Keine gültigen Codes auf xterotex.de gefunden.")
         return
 
     try:
@@ -174,8 +172,8 @@ def main():
 
     for code in codes:
         if code not in current_markdown:
-            print(f"[!] Neuer Code aus BSG-Quellen wird angefügt: {code}")
-            new_row = f"\n| `{code}` | 🟡 **UNGEPRÜFT** | *Gefunden via BSG / Stream / Discord* |"
+            print(f"[!] Neuer Code von xterotex.de wird angefügt: {code}")
+            new_row = f"\n| `{code}` | 🟡 **UNGEPRÜFT** | *Gefunden auf xterotex.de* |"
             
             updated_markdown = re.sub(
                 separator_pattern,
@@ -190,9 +188,9 @@ def main():
         updated_markdown = re.sub(r"Letzte Aktualisierung: \d{4}-\d{2}-\d{2}", f"Letzte Aktualisierung: {today}", updated_markdown)
         
         update_and_render_wiki_page(page_data, updated_markdown)
-        print(f"[+] {added_count} neue(r) Code(s) aus BSG-Quellen eingetragen!")
+        print(f"[+] {added_count} neue(r) Code(s) erfolgreich im Wiki eingetragen!")
     else:
-        print("[*] Alle gefundenen Codes sind bereits im Wiki vorhanden.")
+        print("[*] Alle ausgelesenen Codes von xterotex.de sind bereits im Wiki eingetragen.")
 
 if __name__ == "__main__":
     main()
