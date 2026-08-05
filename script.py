@@ -11,10 +11,21 @@ WIKI_PAGE_ID = int(os.environ.get("WIKI_PAGE_ID", "0"))
 def get_latest_reddit_codes():
     print("[*] Durchsuche Reddit nach neuen Codes...")
     url = "https://www.reddit.com/r/EscapefromTarkov/search.json?q=promo+code&sort=new&restrict_sr=on&t=week"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) EFT-Bot/1.0"}
+    
+    # Individueller User-Agent umgeht die 403-Sperre von Cloud-Runnern
+    headers = {
+        "User-Agent": "script:eft-promo-updater:v1.1 (by /u/custom_tarkov_bot)"
+    }
     
     try:
         response = requests.get(url, headers=headers, timeout=10)
+        
+        # Fallback auf alte Reddit-URL, falls die neue blockiert wird
+        if response.status_code == 403:
+            print("[!] Status 403 erhalten. Versuche Fallback-URL (old.reddit.com)...")
+            url = "https://old.reddit.com/r/EscapefromTarkov/search.json?q=promo+code&sort=new&restrict_sr=on&t=week"
+            response = requests.get(url, headers=headers, timeout=10)
+
         if response.status_code != 200:
             print(f"[-] Reddit-Abfrage fehlgeschlagen: HTTP Status {response.status_code}")
             return []
