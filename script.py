@@ -91,7 +91,6 @@ def update_and_render_wiki_page(page_data, new_content):
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36"
     }
 
-    # 1. Inhalte in der Datenbank aktualisieren
     mutation_update = """
     mutation ($id: Int!, $content: String!, $title: String!, $description: String!, $path: String!, $locale: String!) {
       pages {
@@ -122,8 +121,6 @@ def update_and_render_wiki_page(page_data, new_content):
     res_update = requests.post(WIKI_URL, json={'query': mutation_update, 'variables': variables}, headers=headers)
     print("[+] Wiki-Update Server-Antwort:", res_update.json())
 
-    # 2. Re-Rendering-Befehl an das Wiki senden (HTML-Cache leeren für diese Seite)
-    print("[*] Sende Re-Rendering Befehl an Wiki.js...")
     mutation_render = """
     mutation ($id: Int!) {
       pages {
@@ -156,10 +153,11 @@ def main():
     added_count = 0
     updated_markdown = current_markdown
 
-    table_header_pattern = r"(\| *Promo-Code *\| *Status *\| *Belohnungen / Inhalt *\|)"
+    # Trennlinie der Markdown-Tabelle (| :--- | :---: | :--- |) flexibel suchen
+    separator_pattern = r"(\| *:\s*---+\s*\| *:\s*---+\s*:\s*\| *:\s*---+\s*\|)"
 
-    if not re.search(table_header_pattern, updated_markdown, re.IGNORECASE):
-        print("[-] WARNUNG: Tabellenkopf im Wiki nicht gefunden!")
+    if not re.search(separator_pattern, updated_markdown):
+        print("[-] WARNUNG: Tabellen-Trennlinie im Wiki nicht gefunden!")
         return
 
     for code in codes:
@@ -167,8 +165,9 @@ def main():
             print(f"[!] Neuer Code wird angefügt: {code}")
             new_row = f"\n| `{code}` | 🟡 **UNGEPRÜFT** | *Neu entdeckt* |"
             
+            # Fügt die Zeile direkt unter der Trennlinie ein
             updated_markdown = re.sub(
-                r"(\| *:--- *\| *:---: *\| *:--- *\|)",
+                separator_pattern,
                 r"\1" + new_row,
                 updated_markdown,
                 count=1
@@ -180,7 +179,7 @@ def main():
         updated_markdown = re.sub(r"Letzte Aktualisierung: \d{4}-\d{2}-\d{2}", f"Letzte Aktualisierung: {today}", updated_markdown)
         
         update_and_render_wiki_page(page_data, updated_markdown)
-        print(f"[+] {added_count} neue(r) Code(s) eingetragen und Seite frisch gerendert!")
+        print(f"[+] {added_count} neue(r) Code(s) erfolgreich im Wiki eingetragen!")
     else:
         print("[*] Alle gefundenen Codes sind bereits im Wiki vorhanden.")
 
